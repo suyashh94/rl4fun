@@ -1,0 +1,13 @@
+{
+  "env": "CartPole-v1",
+  "lr": 1e-4,
+  "hidden": 128,
+  "episodes_per_update": 10,
+  "max_updates": 500,
+  "gamma": 0.99,
+  "seed": 42,
+  "normalize_obs": true,
+  "log_dir": "reinforce/experiments/runs",
+  "tag": "cartpole_p1_baseline"
+}
+
