@@ -1,0 +1,30 @@
+# VCS
+.git
+.gitignore
+
+# Python caches and build artifacts
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+dist/
+build/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual envs
+.venv/
+venv/
+
+# Editor/OS noise
+.DS_Store
+.idea/
+.vscode/
+
+# Env files
+.env
+.env.*
+
