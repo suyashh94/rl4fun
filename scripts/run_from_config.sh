@@ -40,6 +40,7 @@ SEED=$(read_json_default seed 1)
 TAG=$(read_json_default tag "")
 LOG_DIR=$(read_json_default log_dir "reinforce/experiments/runs")
 NORMALIZE_OBS=$(jq -er '.normalize_obs // false' "$CONFIG_PATH" 2>/dev/null || echo false)
+USE_RTG=$(jq -er '.use_rtg // false' "$CONFIG_PATH" 2>/dev/null || echo false)
 
 if [[ -z "$ENV_ID" ]]; then
   echo "[!] Missing 'env' (or 'env_id') in $CONFIG_PATH" >&2
@@ -63,8 +64,11 @@ if [[ "$NORMALIZE_OBS" == "true" ]]; then
   CMD+=(--normalize-obs)
 fi
 
+if [[ "$USE_RTG" == "true" ]]; then
+  CMD+=(--use-rtg)
+fi
+
 echo "[run] ${CMD[*]}"
 if [[ "$DRY_RUN" == "false" ]]; then
   exec "${CMD[@]}"
 fi
-

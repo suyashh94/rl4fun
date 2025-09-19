@@ -13,6 +13,7 @@ import torch.optim as optim
 
 from reinforce.agents.policy_categorical import CategoricalPolicy
 from reinforce.algo.reinforce import actor_loss, collect_episodes
+from reinforce.algo.reinforce import collect_episodes_steps, actor_loss_rtg
 from reinforce.utils.seeding import set_global_seeds
 from reinforce.utils.tb import TbLogger
 from reinforce.utils.metadata import get_git_info, get_versions, iso_now, write_json, append_jsonl
@@ -30,6 +31,7 @@ class Config:
     log_dir: str = "reinforce/experiments/runs"
     tag: str | None = None
     normalize_obs: bool = False
+    use_rtg: bool = False
 
 
 def make_env(env_id: str, seed: int, normalize_obs: bool) -> gym.Env:
@@ -56,9 +58,16 @@ def train(cfg: Config) -> None:
     policy = CategoricalPolicy(obs_dim, act_dim, hidden=cfg.hidden).to(device)
     optimizer = optim.Adam(policy.parameters(), lr=cfg.lr)
 
-    # Logging
+    # Logging: ensure a unique run directory. If a tag is provided and already exists,
+    # append a timestamp suffix to avoid collisions/overwrites.
+    base_dir = Path(cfg.log_dir)
+    base_dir.mkdir(parents=True, exist_ok=True)
     tag = cfg.tag or time.strftime("%Y%m%d_%H%M%S")
-    log_path = Path(cfg.log_dir) / tag
+    log_path = base_dir / tag
+    if log_path.exists() and any(log_path.iterdir()):
+        suffix = time.strftime("%Y%m%d_%H%M%S")
+        tag = f"{tag}_{suffix}"
+        log_path = base_dir / tag
     tb = TbLogger(log_path)
 
     print(f"Seed: {seed}  Device: {device}")
@@ -87,13 +96,20 @@ def train(cfg: Config) -> None:
     best_ret_mean = -float("inf")
     for update in range(1, cfg.max_updates + 1):
         t0 = time.time()
-        sum_logps, returns, stats = collect_episodes(
-            env=env, policy=policy, episodes=cfg.episodes_per_update, device=device, gamma=cfg.gamma
-        )
-        
-        policy.train()
-        optimizer.zero_grad(set_to_none=True)
-        loss = actor_loss(sum_logps, returns, device=device)
+        if cfg.use_rtg:
+            all_logps, all_rewards, stats = collect_episodes_steps(
+                env=env, policy=policy, episodes=cfg.episodes_per_update, device=device
+            )
+            policy.train()
+            optimizer.zero_grad(set_to_none=True)
+            loss, rtg_diag = actor_loss_rtg(all_logps, all_rewards, gamma=cfg.gamma, device=device)
+        else:
+            sum_logps, returns, stats = collect_episodes(
+                env=env, policy=policy, episodes=cfg.episodes_per_update, device=device, gamma=cfg.gamma
+            )
+            policy.train()
+            optimizer.zero_grad(set_to_none=True)
+            loss = actor_loss(sum_logps, stats.returns, device=device)
         
         loss.backward()
         grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=float("inf")).item()
@@ -112,6 +128,9 @@ def train(cfg: Config) -> None:
         tb.log_scalar("train/return_max", ret_max, update)
         tb.log_scalar("train/return_ma", ret_ma, update)
         tb.log_scalar("train/actor_loss", float(loss.item()), update)
+        if cfg.use_rtg:
+            tb.log_scalar("train/gt_mean", rtg_diag.get("gt_mean", 0.0), update)
+            tb.log_scalar("train/gt_std", rtg_diag.get("gt_std", 0.0), update)
         tb.log_scalar("train/avg_entropy", stats.avg_entropy, update)
         tb.log_scalar("train/avg_logp", stats.avg_logp, update)
         tb.log_scalar("train/grad_norm", grad_norm, update)
@@ -147,6 +166,7 @@ def parse_args() -> Config:
     p.add_argument("--log-dir", type=str, default="reinforce/experiments/runs")
     p.add_argument("--tag", type=str, default=None)
     p.add_argument("--normalize-obs", action="store_true", default=False, help="Normalize observations")
+    p.add_argument("--use-rtg", action="store_true", default=False, help="Use reward-to-go objective (Phase 2)")
     args = p.parse_args()
     return Config(
         env_id=args.env_id,
@@ -159,6 +179,7 @@ def parse_args() -> Config:
         log_dir=args.log_dir,
         tag=args.tag,
         normalize_obs=args.normalize_obs,
+        use_rtg=args.use_rtg,
     )
 
 

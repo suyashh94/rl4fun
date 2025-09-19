@@ -9,6 +9,8 @@ class CategoricalPolicy(nn.Module):
         self.net = nn.Sequential(
             nn.Linear(obs_dim, hidden),
             nn.ReLU(inplace=True),
+            nn.Linear(hidden, hidden),
+            nn.ReLU(inplace=True),
             nn.Linear(hidden,act_dim),
             )
     def forward(self, obs: torch.Tensor) -> Categorical:
