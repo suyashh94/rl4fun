@@ -43,6 +43,9 @@ NORMALIZE_OBS=$(jq -er '.normalize_obs // false' "$CONFIG_PATH" 2>/dev/null || e
 USE_RTG=$(jq -er '.use_rtg // false' "$CONFIG_PATH" 2>/dev/null || echo false)
 USE_BASELINE=$(jq -er '.use_baseline // false' "$CONFIG_PATH" 2>/dev/null || echo false)
 CRITIC_LR=$(read_json_default critic_lr "1e-3")
+NORMALIZE_ADV=$(jq -er '.normalize_adv // false' "$CONFIG_PATH" 2>/dev/null || echo false)
+ENTROPY_COEF=$(read_json_default entropy_coef "0.0")
+GRAD_CLIP=$(read_json_default grad_clip "0.0")
 
 if [[ -z "$ENV_ID" ]]; then
   echo "[!] Missing 'env' (or 'env_id') in $CONFIG_PATH" >&2
@@ -56,7 +59,9 @@ CMD=(python -m reinforce.main --env "$ENV_ID" \
   --max-updates "$MAX_UPDATES" \
   --gamma "$GAMMA" \
   --seed "$SEED" \
-  --log-dir "$LOG_DIR")
+  --log-dir "$LOG_DIR" \
+  --entropy-coef "$ENTROPY_COEF" \
+  --grad-clip "$GRAD_CLIP")
 
 if [[ -n "$TAG" && "$TAG" != "null" ]]; then
   CMD+=(--tag "$TAG")
@@ -72,6 +77,10 @@ fi
 
 if [[ "$USE_BASELINE" == "true" ]]; then
   CMD+=(--use-baseline --critic-lr "$CRITIC_LR")
+fi
+
+if [[ "$NORMALIZE_ADV" == "true" ]]; then
+  CMD+=(--normalize-adv)
 fi
 
 echo "[run] ${CMD[*]}"

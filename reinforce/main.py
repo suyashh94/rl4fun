@@ -40,6 +40,9 @@ class Config:
     use_rtg: bool = False
     use_baseline: bool = False
     critic_lr: float = 1e-3
+    normalize_adv: bool = False
+    entropy_coef: float = 0.0
+    grad_clip: float = 0.0
 
 
 def make_env(env_id: str, seed: int, normalize_obs: bool) -> gym.Env:
@@ -116,9 +119,12 @@ def train(cfg: Config) -> None:
         actor_grad_norm = 0.0
         critic_grad_norm = None
 
+        entropy_bonus_term = None
+        entropy_mean_value = None
+
         if cfg.use_baseline:
             assert value_net is not None and critic_optimizer is not None
-            all_logps, all_rewards, all_obs, stats = collect_episodes_steps(
+            all_logps, all_rewards, all_obs, all_entropies, stats = collect_episodes_steps(
                 env=env, policy=policy, episodes=cfg.episodes_per_update, device=device
             )
             policy.train()
@@ -132,33 +138,78 @@ def train(cfg: Config) -> None:
                 gamma=cfg.gamma,
                 value_net=value_net,
                 device=device,
+                normalize_adv=cfg.normalize_adv,
             )
+            if cfg.entropy_coef > 0.0:
+                entropy_terms = [torch.stack(ep).to(device) for ep in all_entropies if ep]
+                if entropy_terms:
+                    all_entropy = torch.cat(entropy_terms)
+                    entropy_mean_value = float(all_entropy.detach().cpu().mean().item())
+                    entropy_bonus = -cfg.entropy_coef * all_entropy.mean()
+                    actor_loss_tensor = actor_loss_tensor + entropy_bonus
+                    entropy_bonus_term = float(entropy_bonus.detach().cpu().item())
+                    diag["entropy_bonus"] = entropy_bonus_term
+                    diag["entropy_mean_tensor"] = entropy_mean_value
             actor_loss_tensor.backward()
-            actor_grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=float("inf")).item()
+            actor_clip_val = cfg.grad_clip if cfg.grad_clip > 0 else float("inf")
+            actor_grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=actor_clip_val).item()
             optimizer.step()
 
             critic_loss_tensor.backward()
-            critic_grad_norm = torch.nn.utils.clip_grad_norm_(value_net.parameters(), max_norm=float("inf")).item()
+            critic_clip_val = cfg.grad_clip if cfg.grad_clip > 0 else float("inf")
+            critic_grad_norm = torch.nn.utils.clip_grad_norm_(value_net.parameters(), max_norm=critic_clip_val).item()
             critic_optimizer.step()
         elif cfg.use_rtg:
-            all_logps, all_rewards, _all_obs, stats = collect_episodes_steps(
+            all_logps, all_rewards, _all_obs, all_entropies, stats = collect_episodes_steps(
                 env=env, policy=policy, episodes=cfg.episodes_per_update, device=device
             )
             policy.train()
             optimizer.zero_grad(set_to_none=True)
-            actor_loss_tensor, diag = actor_loss_rtg(all_logps, all_rewards, gamma=cfg.gamma, device=device)
+            actor_loss_tensor, diag = actor_loss_rtg(
+                all_logps,
+                all_rewards,
+                gamma=cfg.gamma,
+                device=device,
+                normalize_adv=cfg.normalize_adv,
+            )
+            if cfg.entropy_coef > 0.0:
+                entropy_terms = [torch.stack(ep).to(device) for ep in all_entropies if ep]
+                if entropy_terms:
+                    all_entropy = torch.cat(entropy_terms)
+                    entropy_mean_value = float(all_entropy.detach().cpu().mean().item())
+                    entropy_bonus = -cfg.entropy_coef * all_entropy.mean()
+                    actor_loss_tensor = actor_loss_tensor + entropy_bonus
+                    entropy_bonus_term = float(entropy_bonus.detach().cpu().item())
+                    diag["entropy_bonus"] = entropy_bonus_term
+                    diag["entropy_mean_tensor"] = entropy_mean_value
             actor_loss_tensor.backward()
-            actor_grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=float("inf")).item()
+            actor_clip_val = cfg.grad_clip if cfg.grad_clip > 0 else float("inf")
+            actor_grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=actor_clip_val).item()
             optimizer.step()
         else:
-            sum_logps, returns, stats = collect_episodes(
+            sum_logps, returns, all_entropies, stats = collect_episodes(
                 env=env, policy=policy, episodes=cfg.episodes_per_update, device=device, gamma=cfg.gamma
             )
+            returns_for_loss = stats.returns
+            if cfg.normalize_adv and returns_for_loss:
+                returns_tensor = torch.as_tensor(returns_for_loss, dtype=torch.float32, device=device)
+                mean = returns_tensor.mean()
+                std = returns_tensor.std(unbiased=False)
+                returns_for_loss = ((returns_tensor - mean) / (std + 1e-8)).tolist()
             policy.train()
             optimizer.zero_grad(set_to_none=True)
-            actor_loss_tensor = actor_loss(sum_logps, stats.returns, device=device)
+            actor_loss_tensor = actor_loss(sum_logps, returns_for_loss, device=device)
+            if cfg.entropy_coef > 0.0:
+                entropy_terms = [torch.stack(ep).to(device) for ep in all_entropies if ep]
+                if entropy_terms:
+                    all_entropy = torch.cat(entropy_terms)
+                    entropy_mean_value = float(all_entropy.detach().cpu().mean().item())
+                    entropy_bonus = -cfg.entropy_coef * all_entropy.mean()
+                    actor_loss_tensor = actor_loss_tensor + entropy_bonus
+                    entropy_bonus_term = float(entropy_bonus.detach().cpu().item())
             actor_loss_tensor.backward()
-            actor_grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=float("inf")).item()
+            actor_clip_val = cfg.grad_clip if cfg.grad_clip > 0 else float("inf")
+            actor_grad_norm = torch.nn.utils.clip_grad_norm_(policy.parameters(), max_norm=actor_clip_val).item()
             optimizer.step()
 
         dt = time.time() - t0
@@ -176,6 +227,10 @@ def train(cfg: Config) -> None:
         tb.log_scalar("train/actor_loss", float(actor_loss_tensor.detach().cpu().item()), update)
         tb.log_scalar("train/actor_grad_norm", actor_grad_norm, update)
         tb.log_scalar("train/grad_norm", actor_grad_norm, update)
+        if entropy_bonus_term is not None:
+            tb.log_scalar("train/entropy_bonus", entropy_bonus_term, update)
+        if entropy_mean_value is not None:
+            tb.log_scalar("train/entropy_mean", entropy_mean_value, update)
 
         if cfg.use_baseline and critic_loss_tensor is not None:
             tb.log_scalar("train/critic_loss", float(critic_loss_tensor.detach().cpu().item()), update)
@@ -216,7 +271,7 @@ def train(cfg: Config) -> None:
 
 
 def parse_args() -> Config:
-    p = argparse.ArgumentParser(description="REINFORCE training script (Phases 1-3)")
+    p = argparse.ArgumentParser(description="REINFORCE training script (Phases 1-4)")
     p.add_argument("--env", dest="env_id", type=str, default="CartPole-v1")
     p.add_argument("--lr", type=float, default=3e-3)
     p.add_argument("--hidden", type=int, default=128)
@@ -230,6 +285,9 @@ def parse_args() -> Config:
     p.add_argument("--use-rtg", action="store_true", default=False, help="Use reward-to-go objective (Phase 2)")
     p.add_argument("--use-baseline", action="store_true", default=False, help="Use learned value baseline (Phase 3)")
     p.add_argument("--critic-lr", type=float, default=1e-3, help="Learning rate for value network when baseline is enabled")
+    p.add_argument("--normalize-adv", action="store_true", default=False, help="Normalize advantages before the policy update")
+    p.add_argument("--entropy-coef", type=float, default=0.0, help="Entropy bonus weight for exploration (Phase 4)")
+    p.add_argument("--grad-clip", type=float, default=0.0, help="Max gradient norm for clipping (0 disables)")
     args = p.parse_args()
     return Config(
         env_id=args.env_id,
@@ -245,6 +303,9 @@ def parse_args() -> Config:
         use_rtg=args.use_rtg,
         use_baseline=args.use_baseline,
         critic_lr=args.critic_lr,
+        normalize_adv=args.normalize_adv,
+        entropy_coef=args.entropy_coef,
+        grad_clip=args.grad_clip,
     )
 
 

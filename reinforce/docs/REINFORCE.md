@@ -135,6 +135,16 @@ The variance of policy gradient estimates can be significantly reduced by using 
 
 This enhanced version implements the unbiased gradient estimator with baseline:contentReference[oaicite:13]{index=13} and reduces variance.  In practice it is referred to as the **vanilla policy gradient** or **REINFORCE with baseline** and forms the foundation for more advanced actor–critic methods.
 
+## Stabilising add-ons (Phase 4)
+
+Phase 4 introduces lightweight stabilisers that make policy-gradient training smoother without altering the underlying objective.
+
+- **Advantage normalisation.**  Before computing the policy loss we subtract the batch mean of the advantages and divide by their standard deviation.  This keeps updates well scaled (zero mean, unit variance) and prevents extremely large gradients when returns spike.  Toggle with `--normalize-adv` (config key: `normalize_adv`).
+- **Entropy bonus.**  We add `-β · H(π(·|s))` to the loss so the optimiser maximises entropy alongside return, encouraging exploration when policies start to collapse.  The coefficient β is set via `--entropy-coef` / `entropy_coef`.  Setting β=0 disables the term; small values like 0.003 work well for CartPole.
+- **Gradient clipping.**  To guard against occasional exploding gradients we clip the global ℓ₂ norm of the actor (and critic) gradients at a configurable threshold using `--grad-clip` / `grad_clip`.  Passing 0 leaves gradients untouched.
+
+These toggles compose with the earlier phases, so you can train with reward-to-go, a baseline, entropy regularisation, and clipping from a single config (`run_from_config.sh` forwards each option to the CLI).
+
 ## Summary
 
 The REINFORCE algorithm is a simple Monte‑Carlo policy gradient method: it estimates the gradient of the expected return by sampling trajectories and weighting the log‑probabilities of actions by the observed returns.  The derivation leverages the log‑derivative trick and the independence of environment dynamics:contentReference[oaicite:14]{index=14}, leading to an elegant expression for the policy gradient:contentReference[oaicite:15]{index=15}.  Reward‑to‑go and baselines are optional modifications that retain unbiasedness while reducing variance.  Using an on‑policy value function as a baseline is particularly effective:contentReference[oaicite:16]{index=16} and is standard in modern policy gradient implementations.
