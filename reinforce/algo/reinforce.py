@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, List, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 import gymnasium as gym
 import numpy as np
@@ -109,17 +109,19 @@ def collect_episodes_steps(
     policy: torch.nn.Module,
     episodes: int,
     device: torch.device,
-) -> Tuple[List[List[Tensor]], List[List[float]], StepStats]:
-    """Collect episodes returning per-step logps (tensors) and rewards.
+) -> Tuple[List[List[Tensor]], List[List[float]], List[List[Sequence[float]]], StepStats]:
+    """Collect episodes returning per-step logps (tensors), rewards, and observations.
 
     Returns
       - all_logps: list over episodes of list[Tensor] per step
       - all_rewards: list over episodes of list[float] per step
+      - all_obs: list over episodes of list[np.ndarray] per step
       - stats: includes per-episode returns/lengths and policy stats
     """
     policy.eval()
     all_logps: List[List[Tensor]] = []
     all_rewards: List[List[float]] = []
+    all_obs: List[List[Sequence[float]]] = []
     returns: List[float] = []
     lengths: List[int] = []
     entropies: List[float] = []
@@ -131,8 +133,10 @@ def collect_episodes_steps(
         trunc = False
         ep_logps: List[Tensor] = []
         ep_rewards: List[float] = []
+        ep_obs: List[Sequence[float]] = []
         steps = 0
         while not (term or trunc):
+            ep_obs.append(np.asarray(obs, dtype=np.float32))
             obs_t = torch.as_tensor(obs, dtype=torch.float32, device=device).unsqueeze(0)
             dist = policy(obs_t)
             action = dist.sample()
@@ -153,6 +157,7 @@ def collect_episodes_steps(
         lengths.append(steps)
         all_logps.append(ep_logps)
         all_rewards.append(ep_rewards)
+        all_obs.append(ep_obs)
 
     # Rough per-step reward stats (not RTG); RTG stats computed in the loss path
     flat_rewards = [r for ep in all_rewards for r in ep]
@@ -171,7 +176,16 @@ def collect_episodes_steps(
         gt_min=gt_min,
         gt_max=gt_max,
     )
-    return all_logps, all_rewards, stats
+    return all_logps, all_rewards, all_obs, stats
+
+
+def discounted_reward_to_go(rewards: Sequence[float], gamma: float) -> List[float]:
+    G = 0.0
+    rtg: List[float] = [0.0] * len(rewards)
+    for t in reversed(range(len(rewards))):
+        G = rewards[t] + gamma * G
+        rtg[t] = G
+    return rtg
 
 
 def actor_loss_rtg(
@@ -188,12 +202,7 @@ def actor_loss_rtg(
     terms: List[Tensor] = []
     gt_all: List[float] = []
     for ep_logps, ep_rewards in zip(all_logps, all_rewards):
-        # Compute reward-to-go for this episode
-        G = 0.0
-        rtg: List[float] = [0.0] * len(ep_rewards)
-        for t in reversed(range(len(ep_rewards))):
-            G = ep_rewards[t] + gamma * G
-            rtg[t] = G
+        rtg = discounted_reward_to_go(ep_rewards, gamma)
         gt_all.extend(rtg)
 
         # Accumulate per-step terms; detach RTG so no grad flows into rewards
@@ -209,3 +218,57 @@ def actor_loss_rtg(
         "gt_max": float(np.max(gt_all)) if gt_all else 0.0,
     }
     return loss, diag
+
+
+def actor_critic_loss(
+    all_logps: List[List[Tensor]],
+    all_rewards: List[List[float]],
+    all_obs: List[List[Sequence[float]]],
+    gamma: float,
+    value_net: torch.nn.Module,
+    device: torch.device,
+) -> Tuple[Tensor, Tensor, Dict[str, float]]:
+    """Compute actor/critic losses with a learned baseline."""
+    actor_terms: List[Tensor] = []
+    critic_terms: List[Tensor] = []
+    value_maes: List[Tensor] = []
+    adv_all: List[Tensor] = []
+    gt_all: List[float] = []
+
+    for ep_logps, ep_rewards, ep_obs in zip(all_logps, all_rewards, all_obs):
+        if not ep_rewards:
+            continue
+        rtg = discounted_reward_to_go(ep_rewards, gamma)
+        gt_all.extend(rtg)
+
+        obs_t = torch.as_tensor(np.asarray(ep_obs, dtype=np.float32), device=device)
+        returns_t = torch.as_tensor(rtg, dtype=torch.float32, device=device)
+        values = value_net(obs_t).squeeze(-1)
+
+        advantage = (returns_t - values.detach())
+        logps_t = torch.stack(ep_logps).to(device)
+        actor_terms.append(-(logps_t * advantage).mean())
+
+        critic_error = returns_t - values
+        critic_terms.append(0.5 * (critic_error.pow(2)).mean())
+        value_maes.append(critic_error.abs().mean())
+        adv_all.append(advantage)
+
+    device_tensor = torch.zeros((), dtype=torch.float32, device=device)
+    actor_loss = torch.stack(actor_terms).mean() if actor_terms else device_tensor
+    critic_loss = torch.stack(critic_terms).mean() if critic_terms else device_tensor
+    value_mae = torch.stack(value_maes).mean() if value_maes else device_tensor
+    adv_cat = torch.cat(adv_all) if adv_all else device_tensor
+
+    diag = {
+        "critic_loss": float(critic_loss.detach().cpu().item()) if critic_terms else 0.0,
+        "value_mae": float(value_mae.detach().cpu().item()) if value_maes else 0.0,
+        "adv_mean": float(adv_cat.detach().cpu().mean().item()) if adv_all else 0.0,
+        "adv_std": float(adv_cat.detach().cpu().std(unbiased=False).item()) if adv_all else 0.0,
+        "gt_mean": float(np.mean(gt_all)) if gt_all else 0.0,
+        "gt_std": float(np.std(gt_all)) if gt_all else 0.0,
+        "gt_min": float(np.min(gt_all)) if gt_all else 0.0,
+        "gt_max": float(np.max(gt_all)) if gt_all else 0.0,
+    }
+
+    return actor_loss, critic_loss, diag

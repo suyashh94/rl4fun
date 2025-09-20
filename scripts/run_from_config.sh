@@ -41,6 +41,8 @@ TAG=$(read_json_default tag "")
 LOG_DIR=$(read_json_default log_dir "reinforce/experiments/runs")
 NORMALIZE_OBS=$(jq -er '.normalize_obs // false' "$CONFIG_PATH" 2>/dev/null || echo false)
 USE_RTG=$(jq -er '.use_rtg // false' "$CONFIG_PATH" 2>/dev/null || echo false)
+USE_BASELINE=$(jq -er '.use_baseline // false' "$CONFIG_PATH" 2>/dev/null || echo false)
+CRITIC_LR=$(read_json_default critic_lr "1e-3")
 
 if [[ -z "$ENV_ID" ]]; then
   echo "[!] Missing 'env' (or 'env_id') in $CONFIG_PATH" >&2
@@ -66,6 +68,10 @@ fi
 
 if [[ "$USE_RTG" == "true" ]]; then
   CMD+=(--use-rtg)
+fi
+
+if [[ "$USE_BASELINE" == "true" ]]; then
+  CMD+=(--use-baseline --critic-lr "$CRITIC_LR")
 fi
 
 echo "[run] ${CMD[*]}"
