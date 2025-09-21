@@ -30,7 +30,11 @@ PHASES: List[Tuple[str, Dict[str, object]]] = [
     ("phase2_rtg", {"use_rtg": True, "use_baseline": False, "normalize_adv": False, "entropy_coef": 0.0, "grad_clip": 0.0}),
     ("phase3_baseline", {"use_rtg": True, "use_baseline": True, "normalize_adv": False, "entropy_coef": 0.0, "grad_clip": 0.0}),
     (
-        "phase4_stabilised",
+        "phase4_stabilised_no_adv_norm",
+        {"use_rtg": True, "use_baseline": True, "normalize_adv": False, "entropy_coef": 0.003, "grad_clip": 1.0},
+    ),
+    (
+        "phase5_stabilised_with_adv_norm",
         {"use_rtg": True, "use_baseline": True, "normalize_adv": True, "entropy_coef": 0.003, "grad_clip": 1.0},
     ),
 ]
