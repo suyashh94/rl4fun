@@ -1,0 +1,18 @@
+{
+  "env": "CartPole-v1",
+  "lr": 0.003,
+  "hidden": 128,
+  "episodes_per_update": 10,
+  "max_updates": 600,
+  "gamma": 0.99,
+  "seed": 42,
+  "normalize_obs": true,
+  "use_rtg": true,
+  "use_baseline": true,
+  "critic_lr": 0.001,
+  "normalize_adv": true,
+  "entropy_coef": 0.003,
+  "grad_clip": 1.0,
+  "log_dir": "reinforce/experiments/runs",
+  "tag": "cartpole_phase4_advnorm"
+}
