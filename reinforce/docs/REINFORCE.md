@@ -133,7 +133,7 @@ The variance of policy gradient estimates can be significantly reduced by using 
    7. **Value loss:** compute the mean squared error between G_t and V_φ(s_t) and update φ by gradient descent.
       *This trains the value network to approximate V^π(s), the average return from state s under the current policy:contentReference[oaicite:12]{index=12}.*
 
-This enhanced version implements the unbiased gradient estimator with baseline:contentReference[oaicite:13]{index=13} and reduces variance.  In practice it is referred to as the **vanilla policy gradient** or **REINFORCE with baseline** and forms the foundation for more advanced actor–critic methods.
+This enhanced version implements the unbiased gradient estimator with baseline:contentReference[oaicite:13]{index=13} and reduces variance.  In practice it is referred to as the **vanilla policy gradient** or **REINFORCE with baseline** and forms the foundation for more advanced baseline-augmented policy-gradient methods.
 
 ## Stabilising add-ons (Phase 4)
 
@@ -141,9 +141,20 @@ Phase 4 introduces lightweight stabilisers that make policy-gradient training s
 
 - **Advantage normalisation.**  Before computing the policy loss we subtract the batch mean of the advantages and divide by their standard deviation.  This keeps updates well scaled (zero mean, unit variance) and prevents extremely large gradients when returns spike.  Toggle with `--normalize-adv` (config key: `normalize_adv`).
 - **Entropy bonus.**  We add `-β · H(π(·|s))` to the loss so the optimiser maximises entropy alongside return, encouraging exploration when policies start to collapse.  The coefficient β is set via `--entropy-coef` / `entropy_coef`.  Setting β=0 disables the term; small values like 0.003 work well for CartPole.
-- **Gradient clipping.**  To guard against occasional exploding gradients we clip the global ℓ₂ norm of the actor (and critic) gradients at a configurable threshold using `--grad-clip` / `grad_clip`.  Passing 0 leaves gradients untouched.
+- **Gradient clipping.**  To guard against occasional exploding gradients we clip the global ℓ₂ norm of the policy (and baseline) gradients at a configurable threshold using `--grad-clip` / `grad_clip`.  Passing 0 leaves gradients untouched.
 
 These toggles compose with the earlier phases, so you can train with reward-to-go, a baseline, entropy regularisation, and clipping from a single config (`run_from_config.sh` forwards each option to the CLI).
+
+### Implementation architecture
+
+- **`ReinforceTrainer`.**  The training loop now lives inside a `ReinforceTrainer` class (`reinforce/trainer.py`).  It handles environment setup, experience collection, batching with padding/masks (longest episode defines the sequence length), loss computation for all phases, optimisation, and TensorBoard logging.
+- **Unified rollout collection.**  A single sampler collects trajectories, converts them into padded tensors, and masks out padding in every loss/metric.  This eliminates the earlier split between per-episode and per-step collectors while enabling batched updates.
+- **Batched objectives.**  Vanilla, reward-to-go, and baseline variants reuse the same batched tensors.  Advantage normalisation, entropy bonuses, and gradient clipping are toggled inside the trainer without duplicating code paths.
+- **History for analysis.**  `ReinforceTrainer.train()` returns a `TrainingHistory` object (updates, moving returns, mean log-probabilities, entropies) so downstream tooling can plot or compare runs without re-reading TensorBoard logs.
+
+### Phase comparison helper
+
+`scripts/run_all_phases.py` runs the four phases sequentially (vanilla, reward-to-go, baseline, stabilised) with consistent hyperparameters, collects their histories, and writes comparative plots (`avg_logp.png`, `return_ma.png`, `avg_entropy.png`).  Use it to sanity-check new changes or to visualise the impact of each feature toggle.
 
 ## Summary
 
