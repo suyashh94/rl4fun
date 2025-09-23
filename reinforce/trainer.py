@@ -13,9 +13,10 @@ from torch import Tensor
 from torch.nn.utils.rnn import pad_sequence
 
 from reinforce.agents import CategoricalPolicy, ValueNet
-from reinforce.utils.metadata import append_jsonl, get_git_info, get_versions, iso_now, write_json
-from reinforce.utils.seeding import set_global_seeds
-from reinforce.utils.tb import TbLogger
+from rl_common.env import make_env
+from rl_common.metadata import append_jsonl, get_git_info, get_versions, iso_now, write_json
+from rl_common.seeding import set_global_seeds
+from rl_common.tb import TbLogger
 
 
 @dataclass
@@ -58,16 +59,6 @@ class TrainingHistory:
     return_ma: List[float] = field(default_factory=list)
     avg_entropy: List[float] = field(default_factory=list)
     avg_logp: List[float] = field(default_factory=list)
-
-
-def make_env(env_id: str, seed: int, normalize_obs: bool) -> gym.Env:
-    env = gym.make(env_id)
-    env.reset(seed=seed)
-    if normalize_obs:
-        env = gym.wrappers.NormalizeObservation(env)
-    return env
-
-
 def _discounted_to_go(rewards: Sequence[float], gamma: float) -> List[float]:
     total = 0.0
     out: List[float] = [0.0] * len(rewards)

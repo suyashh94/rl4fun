@@ -143,18 +143,19 @@ Phase 4 introduces lightweight stabilisers that make policy-gradient training s
 - **Entropy bonus.**  We add `-β · H(π(·|s))` to the loss so the optimiser maximises entropy alongside return, encouraging exploration when policies start to collapse.  The coefficient β is set via `--entropy-coef` / `entropy_coef`.  Setting β=0 disables the term; small values like 0.003 work well for CartPole.
 - **Gradient clipping.**  To guard against occasional exploding gradients we clip the global ℓ₂ norm of the policy (and baseline) gradients at a configurable threshold using `--grad-clip` / `grad_clip`.  Passing 0 leaves gradients untouched.
 
-These toggles compose with the earlier phases, so you can train with reward-to-go, a baseline, entropy regularisation, and clipping from a single config (`run_from_config.sh` forwards each option to the CLI).
+These toggles compose with the earlier phases, so you can train with reward-to-go, a baseline, entropy regularisation, and clipping from a single config (`reinforce/scripts/run_from_config.sh` forwards each option to the CLI).
 
 ### Implementation architecture
 
 - **`ReinforceTrainer`.**  The training loop now lives inside a `ReinforceTrainer` class (`reinforce/trainer.py`).  It handles environment setup, experience collection, batching with padding/masks (longest episode defines the sequence length), loss computation for all phases, optimisation, and TensorBoard logging.
+- **Common utilities.**  Shared helpers for environment factory functions, metadata logging, TensorBoard writers, and seeding now live in `rl_common/`.  Future algorithms (A2C, PPO, …) can import the same modules without duplicating glue code.
 - **Unified rollout collection.**  A single sampler collects trajectories, converts them into padded tensors, and masks out padding in every loss/metric.  This eliminates the earlier split between per-episode and per-step collectors while enabling batched updates.
 - **Batched objectives.**  Vanilla, reward-to-go, and baseline variants reuse the same batched tensors.  Advantage normalisation, entropy bonuses, and gradient clipping are toggled inside the trainer without duplicating code paths.
 - **History for analysis.**  `ReinforceTrainer.train()` returns a `TrainingHistory` object (updates, moving returns, mean log-probabilities, entropies) so downstream tooling can plot or compare runs without re-reading TensorBoard logs.
 
 ### Phase comparison helper
 
-`scripts/run_all_phases.py` runs the four phases sequentially (vanilla, reward-to-go, baseline, stabilised) with consistent hyperparameters, collects their histories, and writes comparative plots (`avg_logp.png`, `return_ma.png`, `avg_entropy.png`).  Use it to sanity-check new changes or to visualise the impact of each feature toggle.
+`reinforce/scripts/run_all_phases.py` runs the four phases sequentially (vanilla, reward-to-go, baseline, stabilised) with consistent hyperparameters, collects their histories, and writes comparative plots (`avg_logp.png`, `return_ma.png`, `avg_entropy.png`).  Use it to sanity-check new changes or to visualise the impact of each feature toggle.
 
 ## Summary
 
