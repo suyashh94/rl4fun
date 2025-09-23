@@ -1,2 +1,3 @@
 reinforce/experiments/*
 *.pyc
+reinforce/reinforce/experiments/*

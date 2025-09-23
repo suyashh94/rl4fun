@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 
 
@@ -8,4 +10,3 @@ def discount_cumsum(rewards: list[float], gamma: float) -> np.ndarray:
         running = rewards[t] + gamma * running
         out[t] = running
     return out
-

@@ -9,7 +9,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -29,14 +29,7 @@ PHASES: List[Tuple[str, Dict[str, object]]] = [
     ("phase1_vanilla", {"use_rtg": False, "use_baseline": False, "normalize_adv": False, "entropy_coef": 0.0, "grad_clip": 0.0}),
     ("phase2_rtg", {"use_rtg": True, "use_baseline": False, "normalize_adv": False, "entropy_coef": 0.0, "grad_clip": 0.0}),
     ("phase3_baseline", {"use_rtg": True, "use_baseline": True, "normalize_adv": False, "entropy_coef": 0.0, "grad_clip": 0.0}),
-    (
-        "phase4_stabilised_no_adv_norm",
-        {"use_rtg": True, "use_baseline": True, "normalize_adv": False, "entropy_coef": 0.003, "grad_clip": 1.0},
-    ),
-    (
-        "phase5_stabilised_with_adv_norm",
-        {"use_rtg": True, "use_baseline": True, "normalize_adv": True, "entropy_coef": 0.003, "grad_clip": 1.0},
-    ),
+    ("phase4_stabilised", {"use_rtg": True, "use_baseline": True, "normalize_adv": True, "entropy_coef": 0.003, "grad_clip": 1.0}),
 ]
 
 
