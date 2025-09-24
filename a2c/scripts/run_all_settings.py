@@ -22,42 +22,44 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from reinforce.trainer import ReinforceTrainer, TrainerConfig, TrainingHistory
+from a2c.trainer import A2CTrainer, TrainerConfig, TrainingHistory
 
 
-PHASES: List[Tuple[str, Dict[str, object]]] = [
-    ("phase1_vanilla", {"use_rtg": False, "use_baseline": False, "normalize_adv": False, "entropy_coef": 0.0, "grad_clip": 0.0}),
-    ("phase2_rtg", {"use_rtg": True, "use_baseline": False, "normalize_adv": False, "entropy_coef": 0.0, "grad_clip": 0.0}),
-    ("phase3_baseline", {"use_rtg": True, "use_baseline": True, "normalize_adv": False, "entropy_coef": 0.0, "grad_clip": 0.0}),
-    ("phase4_stabilised", {"use_rtg": True, "use_baseline": True, "normalize_adv": True, "entropy_coef": 0.003, "grad_clip": 1.0}),
+SETTINGS: List[Tuple[str, Dict[str, object]]] = [
+    ("td_base", {"normalize_adv": False, "grad_clip": 0.0}),
+    ("td_norm", {"normalize_adv": True, "grad_clip": 0.0}),
+    ("td_clip", {"normalize_adv": False, "grad_clip": 1.0}),
+    ("td_norm_clip", {"normalize_adv": True, "grad_clip": 1.0}),
 ]
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run all REINFORCE phases sequentially and plot metrics")
+    parser = argparse.ArgumentParser(description="Run A2C TD settings and plot metrics")
     parser.add_argument("--env", default="CartPole-v1", help="Gymnasium environment id")
-    parser.add_argument("--seed", type=int, default=42, help="Seed shared across all phases")
+    parser.add_argument("--seed", type=int, default=42, help="Seed shared across settings")
     parser.add_argument("--episodes-per-update", type=int, default=10)
     parser.add_argument("--max-updates", type=int, default=200)
     parser.add_argument("--hidden", type=int, default=128)
-    parser.add_argument("--lr", type=float, default=3e-3)
+    parser.add_argument("--actor-lr", type=float, default=3e-3)
     parser.add_argument("--critic-lr", type=float, default=1e-3)
+    parser.add_argument("--value-loss-coef", type=float, default=0.5)
     parser.add_argument("--gamma", type=float, default=0.99)
-    parser.add_argument("--log-dir", default="reinforce/experiments/runs", help="Base directory for run artefacts")
-    parser.add_argument("--output-dir", default="reinforce/experiments/comparisons", help="Where to write the plots")
-    parser.add_argument("--normalize-obs", action="store_true", help="Enable observation normalisation for all phases")
+    parser.add_argument("--log-dir", default="a2c/experiments/runs", help="Base directory for run artefacts")
+    parser.add_argument("--output-dir", default="a2c/experiments/comparisons", help="Where to write the plots")
+    parser.add_argument("--normalize-obs", action="store_true", default=True)
+    parser.add_argument("--no-normalize-obs", action="store_false", dest="normalize_obs")
     return parser.parse_args()
 
 
-def run_phase(base_cfg: TrainerConfig, label: str, overrides: Dict[str, object]) -> Tuple[str, TrainingHistory]:
+def run_setting(base_cfg: TrainerConfig, label: str, overrides: Dict[str, object]) -> Tuple[str, TrainingHistory]:
     tag = f"{label}_{time.strftime('%Y%m%d_%H%M%S')}"
     cfg = replace(base_cfg, tag=tag)
     for key, value in overrides.items():
         setattr(cfg, key, value)
     cfg.tag = tag
 
-    print(f"\n[phase] {label} -> tag={cfg.tag}")
-    trainer = ReinforceTrainer(cfg)
+    print(f"\n[setting] {label} -> tag={cfg.tag}")
+    trainer = A2CTrainer(cfg)
     try:
         history = trainer.train()
     finally:
@@ -73,7 +75,7 @@ def plot_metric(output_dir: Path, histories: List[Tuple[str, TrainingHistory]], 
         ax.plot(updates, values, label=label)
     ax.set_xlabel("Update")
     ax.set_ylabel(ylabel)
-    ax.set_title(f"{ylabel} across phases")
+    ax.set_title(f"{ylabel} across settings")
     ax.legend()
     ax.grid(True, linestyle="--", alpha=0.3)
     fig.tight_layout()
@@ -93,17 +95,19 @@ def main() -> None:
         episodes_per_update=args.episodes_per_update,
         max_updates=args.max_updates,
         gamma=args.gamma,
-        lr=args.lr,
+        actor_lr=args.actor_lr,
         critic_lr=args.critic_lr,
+        value_loss_coef=args.value_loss_coef,
         log_dir=args.log_dir,
         tag=None,
         normalize_obs=args.normalize_obs,
+        normalize_adv=False,
+        grad_clip=0.0,
     )
 
     histories: List[Tuple[str, TrainingHistory]] = []
-    for label, overrides in PHASES:
-        label, history = run_phase(base_cfg, label, overrides)
-        histories.append((label, history))
+    for label, overrides in SETTINGS:
+        histories.append(run_setting(base_cfg, label, overrides))
 
     plot_metric(output_dir, histories, "avg_logp", "Average log probability")
     plot_metric(output_dir, histories, "return_ma", "Return moving average")
