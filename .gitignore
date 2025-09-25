@@ -1,3 +1,4 @@
 reinforce/experiments/*
 *.pyc
 reinforce/reinforce/experiments/*
+a2c/experiments/*
